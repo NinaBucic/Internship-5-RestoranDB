@@ -1,0 +1,10 @@
+insert into Cities (CityID, Name) values (1, 'Rijeka');
+insert into Cities (CityID, Name) values (2, 'Zagreb');
+insert into Cities (CityID, Name) values (3, 'Split');
+insert into Cities (CityID, Name) values (4, 'Karlovac');
+insert into Cities (CityID, Name) values (5, 'Gospić');
+insert into Cities (CityID, Name) values (6, 'Zadar');
+insert into Cities (CityID, Name) values (7, 'Dubrovnik');
+insert into Cities (CityID, Name) values (8, 'Samobor');
+insert into Cities (CityID, Name) values (9, 'Umag');
+insert into Cities (CityID, Name) values (10, 'Novalja');

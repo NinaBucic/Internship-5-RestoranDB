@@ -54,7 +54,7 @@ GROUP BY u.Name,u.Surname;
 
 --8.) List the average rating for restaurants in Rijeka
 SELECT r.Name AS RestaurantName, 
-       AVG(COALESCE(rw.OrderRating, 0) + COALESCE(rw.DeliveryRating, 0)) / 2 AS AverageRating
+       ROUND(AVG(COALESCE(rw.OrderRating, 0) + COALESCE(rw.DeliveryRating, 0)) / 2,2) AS AverageRating
 FROM Restaurants r
 JOIN Cities c ON r.CityID = c.CityID
 JOIN Orders o ON r.RestaurantID = o.RestaurantID

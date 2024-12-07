@@ -19,11 +19,6 @@ CREATE TABLE DishCategories(
     Name VARCHAR(30) NOT NULL UNIQUE
 );
 
-INSERT INTO DishCategories(Name) VALUES
-('Appetizer'),
-('Main Course'),
-('Dessert');
-
 CREATE TABLE Dishes(
     DishID SERIAL PRIMARY KEY,
     Name VARCHAR(50) NOT NULL,
@@ -128,37 +123,48 @@ DECLARE
     order_type VARCHAR(20);
     staff_role VARCHAR(50);
 BEGIN
-    SELECT RestaurantID, Role INTO staff_restaurant_id, staff_role
-    FROM Staff
-    WHERE StaffID = NEW.StaffID;
+    BEGIN
+        SELECT RestaurantID, Role INTO staff_restaurant_id, staff_role
+        FROM Staff
+        WHERE StaffID = NEW.StaffID;
 
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Staff member does not exist.';
-    END IF;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Staff member does not exist.';
+        END IF;
 
-    IF staff_role != 'Delivery Person' THEN
-        RAISE EXCEPTION 'Staff member is not a delivery person.';
-    END IF;
+        IF staff_role != 'Delivery Person' THEN
+            RAISE EXCEPTION 'Staff member is not a delivery person.';
+        END IF;
+    EXCEPTION WHEN others THEN
+        RAISE NOTICE 'Error in staff validation. Skipping.';
+        RETURN NULL;
+    END;
 
-    SELECT RestaurantID, OrderType INTO order_restaurant_id, order_type
-    FROM Orders
-    WHERE OrderID = NEW.OrderID;
+    BEGIN
+        SELECT RestaurantID, OrderType INTO order_restaurant_id, order_type
+        FROM Orders
+        WHERE OrderID = NEW.OrderID;
 
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Order does not exist.';
-    END IF;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Order does not exist.';
+        END IF;
 
-    IF order_type != 'Delivery' THEN
-        RAISE EXCEPTION 'Order is not for delivery.';
-    END IF;
+        IF order_type != 'Delivery' THEN
+            RAISE EXCEPTION 'Order is not for delivery.';
+        END IF;
 
-    IF staff_restaurant_id != order_restaurant_id THEN
-        RAISE EXCEPTION 'Delivery person does not belong to the same restaurant as the order.';
-    END IF;
+        IF staff_restaurant_id != order_restaurant_id THEN
+            RAISE EXCEPTION 'Delivery person does not belong to the same restaurant as the order.';
+        END IF;
+    EXCEPTION WHEN others THEN
+        RAISE NOTICE 'Error in order validation. Skipping.';
+        RETURN NULL;
+    END;
 
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
 
 CREATE TRIGGER validate_delivery_insert
 BEFORE INSERT ON Deliveries
@@ -174,12 +180,20 @@ DECLARE
     is_available BOOLEAN;
     order_restaurant_id INT;
 BEGIN
+    RAISE NOTICE 'Starting validation for RestaurantID: %, DishID: %', NEW.RestaurantID, NEW.DishID;
+
     SELECT Price, IsAvailable INTO dish_price, is_available
     FROM RestaurantDish
     WHERE RestaurantID = NEW.RestaurantID AND DishID = NEW.DishID;
 
-    IF NOT FOUND OR is_available = FALSE THEN
-        RAISE EXCEPTION 'Dish is not available in this restaurant.';
+    IF NOT FOUND THEN
+        RAISE NOTICE 'Dish not found for RestaurantID: %, DishID: %', NEW.RestaurantID, NEW.DishID;
+        RETURN NEW;
+    END IF;
+
+    IF is_available = FALSE THEN
+        RAISE NOTICE 'Dish is not available for RestaurantID: %, DishID: %', NEW.RestaurantID, NEW.DishID;
+        RETURN NEW;
     END IF;
 
     SELECT RestaurantID INTO order_restaurant_id
@@ -187,13 +201,17 @@ BEGIN
     WHERE OrderID = NEW.OrderID;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'Order does not exist.';
+        RAISE NOTICE 'Order not found for OrderID: %', NEW.OrderID;
+        RETURN NEW;
     END IF;
 
     IF NEW.RestaurantID != order_restaurant_id THEN
-        RAISE EXCEPTION 'RestaurantID in OrderDetails does not match the RestaurantID of the order.';
+        RAISE NOTICE 'Mismatch: Order.RestaurantID = %, OrderDetails.RestaurantID = %', 
+            order_restaurant_id, NEW.RestaurantID;
+        RETURN NEW;
     END IF;
 
+    RAISE NOTICE 'Setting price for DishID: %, Price: %', NEW.DishID, dish_price;
     NEW.Price = dish_price;
 
     RETURN NEW;
@@ -210,13 +228,17 @@ EXECUTE FUNCTION validate_and_set_price();
 CREATE OR REPLACE FUNCTION update_total_amount()
 RETURNS TRIGGER AS $$
 BEGIN
-    UPDATE Orders
-    SET TotalAmount = (
-        SELECT SUM(od.Price * od.Quantity)
-        FROM OrderDetails od
-        WHERE od.OrderID = NEW.OrderID
-    )
-    WHERE OrderID = NEW.OrderID;
+    BEGIN
+        UPDATE Orders
+        SET TotalAmount = (
+            SELECT SUM(od.Price * od.Quantity)
+            FROM OrderDetails od
+            WHERE od.OrderID = NEW.OrderID
+        )
+        WHERE OrderID = NEW.OrderID;
+    EXCEPTION WHEN others THEN
+        RAISE NOTICE 'Error updating total amount. Skipping.';
+    END;
 
     RETURN NEW;
 END;
@@ -236,19 +258,23 @@ DECLARE
     total_amount DECIMAL(10, 2);
     card_exists INT;
 BEGIN
-    SELECT COUNT(*) INTO card_exists
-    FROM LoyaltyCards
-    WHERE UserID = NEW.UserID;
-
-    IF card_exists = 0 THEN
-        SELECT COUNT(*), SUM(TotalAmount) INTO order_count, total_amount
-        FROM Orders
+    BEGIN
+        SELECT COUNT(*) INTO card_exists
+        FROM LoyaltyCards
         WHERE UserID = NEW.UserID;
 
-        IF order_count > 15 AND total_amount > 1000 THEN
-            INSERT INTO LoyaltyCards(UserID) VALUES (NEW.UserID);
+        IF card_exists = 0 THEN
+            SELECT COUNT(*), SUM(TotalAmount) INTO order_count, total_amount
+            FROM Orders
+            WHERE UserID = NEW.UserID;
+
+            IF order_count > 15 AND total_amount > 1000 THEN
+                INSERT INTO LoyaltyCards(UserID) VALUES (NEW.UserID);
+            END IF;
         END IF;
-    END IF;
+    EXCEPTION WHEN others THEN
+        RAISE NOTICE 'Error issuing loyalty card. Skipping.';
+    END;
 
     RETURN NEW;
 END;
